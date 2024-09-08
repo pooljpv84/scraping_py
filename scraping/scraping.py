@@ -189,7 +189,7 @@ class ScrapingService:
         print(f"Resultados guardados en {archivo_salida}")
 
 
-# Main block ooo sii
+# Main block ,,
 if __name__ == "__main__":
     servicio_scraping = ScrapingService()
     archivo_entrada = os.path.join(base_dir, 'cedulas_entrada.xlsx')
