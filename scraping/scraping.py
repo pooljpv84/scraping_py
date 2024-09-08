@@ -12,8 +12,11 @@ import urllib3
 from webdriver_manager.firefox import GeckoDriverManager
 import pandas as pd
 import sys
+import os
 
 urllib3.disable_warnings()
+base_dir = os.path.dirname(os.path.abspath(__file__))
+path_general = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class ScrapingService:
@@ -29,17 +32,17 @@ class ScrapingService:
         firefox_options.set_preference("dom.webnotifications.enabled", False)
         firefox_options.log.level = "trace"
 
+        # Si queres ejecutar en segundo plano
+        # firefox_options.add_argument("--headless")
+
         service = FirefoxService(config.FIREFOX_DRIVER_PATH, log_path="selenium_log.log")
         self.driver = webdriver.Firefox(service=service, options=firefox_options)
 
-        # Inicializamos el cliente de OpenAI con la clave API
+        # call constant
         openai.api_key = config.API_OPENAI
 
     def resolver_captcha_gpt_vision(self, captcha_image_path):
-        """Resolver el captcha usando GPT-4 Vision."""
         print("-> Resolviendo el captcha con GPT-4 Vision")
-
-        # Convertimos la imagen del captcha a base64
         base64_image = self.encode_image(captcha_image_path)
 
         if base64_image is None:
@@ -66,7 +69,7 @@ class ScrapingService:
                         ]
                     }
                 ],
-                max_tokens=250
+                max_tokens=200
             )
             return response['choices'][0]['message']['content']
         except Exception as e:
@@ -74,7 +77,7 @@ class ScrapingService:
             return None
 
     def encode_image(self, image_path):
-        """Función para convertir la imagen a base64"""
+        """Image to base64 oo si"""
         try:
             with open(image_path, "rb") as image_file:
                 return base64.b64encode(image_file.read()).decode("utf-8")
@@ -99,7 +102,7 @@ class ScrapingService:
                 captcha_img.screenshot('captcha.png')
                 print("-> Imagen del captcha guardada como 'captcha.png'")
 
-                captcha_resuelto = self.resolver_captcha_gpt_vision('C:/paul/APPSCRAPING/pythonProject/captcha.png')
+                captcha_resuelto = self.resolver_captcha_gpt_vision(os.path.join(path_general, 'captcha.png'))
 
                 if captcha_resuelto != "NO":
                     print("-> Ingresando el captcha resuelto en el formulario")
@@ -151,7 +154,7 @@ class ScrapingService:
             return None
         finally:
             print("-> Cerrando el navegador...")
-            #self.driver.quit()
+            # self.driver.quit() Cerrar el driver del browser
 
     def procesar_masivo_desde_excel(self, archivo_entrada, archivo_salida):
         # Leer las cédulas desde el archivo Excel asegurándose de que sean tratadas como texto
@@ -174,7 +177,7 @@ class ScrapingService:
                 else:
                     resultados.append(resultado)
             else:
-                # Si no hay resultado (resultado es None), también agregamos la cédula con ceros
+                # En caso de none tb poner 0's
                 resultados.append([0, cedula, 0, 0, 0, 0, 0, 0, 0])
 
         # Crear un nuevo DataFrame con los resultados y guardarlo en un archivo Excel
@@ -186,9 +189,9 @@ class ScrapingService:
         print(f"Resultados guardados en {archivo_salida}")
 
 
-# Main block para ejecutar el scraping masivo
+# Main block ooo sii
 if __name__ == "__main__":
     servicio_scraping = ScrapingService()
-    archivo_entrada = 'C:/paul/APPSCRAPING/pythonProject/scraping/cedulas_entrada.xlsx'  # Asegúrate de tener el archivo de entrada en la misma carpeta
-    archivo_salida = 'C:/paul/APPSCRAPING/pythonProject/scraping/cedulas_salida.xlsx'
+    archivo_entrada = os.path.join(base_dir, 'cedulas_entrada.xlsx')
+    archivo_salida = os.path.join(base_dir, 'cedulas_salida.xlsx')
     servicio_scraping.procesar_masivo_desde_excel(archivo_entrada, archivo_salida)
