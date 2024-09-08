@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QLabel, QLineEdit, QPushButton, QTextEdit
 from .scraping import ScrapingService
 
-#aaajjj
+#3299cc
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
