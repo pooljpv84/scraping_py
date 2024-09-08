@@ -157,13 +157,15 @@ class ScrapingService:
             # self.driver.quit() Cerrar el driver del browser
 
     def procesar_masivo_desde_excel(self, archivo_entrada, archivo_salida):
-        # Leer las cédulas desde el archivo Excel asegurándose de que sean tratadas como texto
-        df = pd.read_excel(archivo_entrada, dtype={'Cedula': str})  # Especifica que la columna Cedula es de tipo texto
+        df = pd.read_excel(archivo_entrada, dtype={'Cedula': str})
         cedulas = df['Cedula']
 
-        resultados = []
+        # Crear el DataFrame
+        columnas = ['Nº', 'Cédula', 'Nombre', 'Institución', 'Título', 'Especialidad', 'Fecha Grado', 'Refrendación',
+                    'Acción']
+        df_resultados = pd.DataFrame(columns=columnas)
 
-        # Recorrer las cédulas y obtener los resultados
+        # Recorrer las c.c y obtener los resultados
         for cedula in cedulas:
             print(f"Procesando cédula: {cedula}")
             resultado = self.obtener_informacion_educativa(cedula)
@@ -173,19 +175,19 @@ class ScrapingService:
                 # Si el resultado contiene "No existe registro", lo manejamos con ceros
                 if "No existe registro" in resultado[0]:
                     print(f"No hay registro de título para la cédula {cedula}")
-                    resultados.append([0, cedula, 0, 0, 0, 0, 0, 0, 0])  # Agregamos la cédula con los valores '0'
+                    fila = [0, cedula, 0, 0, 0, 0, 0, 0, 0]  # Agregamos la cédula con los valores '0'
                 else:
-                    resultados.append(resultado)
+                    fila = resultado
             else:
-                # En caso de none tb poner 0's
-                resultados.append([0, cedula, 0, 0, 0, 0, 0, 0, 0])
+                # En caso de None también poner 0's
+                fila = [0, cedula, 0, 0, 0, 0, 0, 0, 0]
 
-        # Crear un nuevo DataFrame con los resultados y guardarlo en un archivo Excel
-        columnas = ['Nº', 'Cédula', 'Nombre', 'Institución', 'Título', 'Especialidad', 'Fecha Grado', 'Refrendación',
-                    'Acción']
-        df_resultados = pd.DataFrame(resultados, columns=columnas)
+            # Agregar la fila al DataFrame
+            df_resultados = pd.concat([df_resultados, pd.DataFrame([fila], columns=columnas)], ignore_index=True)
 
-        df_resultados.to_excel(archivo_salida, index=False)
+            # Guardar el archivo Excel después de cada iteración
+            df_resultados.to_excel(archivo_salida, index=False)
+
         print(f"Resultados guardados en {archivo_salida}")
 
 
