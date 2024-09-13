@@ -49,6 +49,8 @@ class ScrapingService:
             print("Error: No se pudo convertir la imagen a base64.")
             return None
 
+        # model="gpt-4o-mini",
+        # model= "gpt-4-vision-preview",
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-4o-mini",
@@ -58,7 +60,7 @@ class ScrapingService:
                         "content": [
                             {
                                 "type": "text",
-                                "text": "Resuelve el texto de la imagen del captcha. Devuelve únicamente el texto sin ningún otro comentario. Si no puedes identificar claramente el texto, devuelve 'NO'. Asegúrate de distinguir entre mayúsculas y minúsculas. Intenta interpretar cualquier distorsión en los caracteres de la imagen."
+                                "text": "Lee el captcha. Solo texto. Si no es legible, devuelve 'NO'. Respeta mayúsculas y minúsculas"
                             },
                             {
                                 "type": "image_url",
@@ -69,7 +71,7 @@ class ScrapingService:
                         ]
                     }
                 ],
-                max_tokens=200
+                max_tokens=20
             )
             return response['choices'][0]['message']['content']
         except Exception as e:
