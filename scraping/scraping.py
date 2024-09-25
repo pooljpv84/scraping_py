@@ -31,6 +31,7 @@ class ScrapingService:
         firefox_options.set_preference("webgl.disabled", True)
         firefox_options.set_preference("dom.webnotifications.enabled", False)
         firefox_options.log.level = "trace"
+        firefox_options.binary_location = r'C:\Program Files\Mozilla Firefox\firefox.exe'
 
         # Si queres ejecutar en segundo plano
         # firefox_options.add_argument("--headless")
