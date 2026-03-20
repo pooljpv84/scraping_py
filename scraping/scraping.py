@@ -102,10 +102,16 @@ class ScrapingService:
             for intento in range(max_reintentos):
                 print(f"-> Intento {intento + 1} de {max_reintentos}")
                 captcha_img = self.driver.find_element(By.ID, 'formBusqueda:capimg')
-                captcha_img.screenshot('captcha.png')
-                print("-> Imagen del captcha guardada como 'captcha.png'")
+                captcha_path = os.path.join(path_general, 'captcha.png')
+                try:
+                    if os.path.exists(captcha_path):
+                        os.remove(captcha_path)
+                except Exception as e:
+                    print(f"Advertencia: no se pudo eliminar el captcha anterior: {e}")
+                captcha_img.screenshot(captcha_path)
+                print(f"-> Imagen del captcha guardada en '{captcha_path}'")
 
-                captcha_resuelto = self.resolver_captcha_gpt_vision(os.path.join(path_general, 'captcha.png'))
+                captcha_resuelto = self.resolver_captcha_gpt_vision(captcha_path)
 
                 if captcha_resuelto != "NO":
                     print("-> Ingresando el captcha resuelto en el formulario")
