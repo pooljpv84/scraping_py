@@ -100,85 +100,110 @@ class ScrapingService:
             print(f"Error al leer la imagen: {e}")
             return None
 
+    def preparar_formulario(self, cedula):
+        """Selecciona la búsqueda por cédula y vuelve a escribirla tras cada carga."""
+        from selenium.common.exceptions import StaleElementReferenceException
+
+        print("-> Seleccionando el tipo de búsqueda (radio)")
+        for intento in range(5):
+            try:
+                radio = WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.ID, 'formBusqueda:selecItem:0'))
+                )
+                if not radio.is_selected():
+                    try:
+                        radio.click()
+                    except Exception:
+                        self.driver.execute_script("arguments[0].click();", radio)
+
+                print("-> Esperando 5 segundos antes de ingresar la cédula")
+                time.sleep(5)
+
+                cedula_input = WebDriverWait(self.driver, 10).until(
+                    EC.element_to_be_clickable((By.ID, 'formBusqueda:cedula'))
+                )
+                cedula_input.clear()
+                cedula_input.send_keys(str(cedula))
+                print(f"-> Cédula reingresada: {cedula}")
+                return
+            except StaleElementReferenceException:
+                time.sleep(0.3)
+            except Exception as e:
+                if intento == 4:
+                    raise RuntimeError(
+                        f"No se pudo preparar el formulario para la cédula {cedula}"
+                    ) from e
+                time.sleep(0.5)
+
+    def captcha_incorrecto(self):
+        """Indica si el sitio mostró el mensaje de captcha rechazado."""
+        try:
+            mensaje = self.driver.find_element(
+                By.ID, 'formBusqueda:validarCaptcha'
+            ).text
+            return "captcha ingresado es incorrecto" in mensaje.lower()
+        except Exception:
+            return False
+
+    def cedula_sin_informacion(self):
+        """Detecta que la cédula no tiene títulos registrados."""
+        mensaje_esperado = (
+            "no consta información de títulos de bachiller "
+            "registrados en el sistema"
+        )
+        try:
+            elementos = self.driver.find_elements(
+                By.XPATH,
+                "//div[contains(@class,'table-responsive')]"
+                "//span[contains(translate(normalize-space(.),"
+                "'ABCDEFGHIJKLMNOPQRSTUVWXYZÁÉÍÓÚÜÑ',"
+                "'abcdefghijklmnopqrstuvwxyzáéíóúüñ'),"
+                "'no consta información de títulos de bachiller registrados en el sistema')]"
+            )
+            if elementos:
+                return True
+
+            texto_pagina = self.driver.find_element(By.TAG_NAME, "body").text.lower()
+            return mensaje_esperado in texto_pagina
+        except Exception:
+            return False
+
+    def esperar_resultado_consulta(self, timeout=12):
+        """Espera uno de los posibles resultados posteriores a Consultar."""
+        fin = time.time() + timeout
+        xpath_ver_informacion = (
+            "//input[starts-with(@id,'formBusqueda:j_idt') "
+            "and @type='submit' "
+            "and normalize-space(@value)='Ver información']"
+        )
+
+        while time.time() < fin:
+            if self.captcha_incorrecto():
+                return "captcha_incorrecto"
+            if self.cedula_sin_informacion():
+                return "sin_informacion"
+            if self.driver.find_elements(By.XPATH, xpath_ver_informacion):
+                return "con_informacion"
+            time.sleep(0.3)
+
+        return "sin_respuesta"
+
+    def recargar_para_nuevo_captcha(self, cedula):
+        """Recarga, reingresa la cédula y deja listo un captcha nuevo."""
+        self.driver.refresh()
+        self.preparar_formulario(cedula)
+
     def obtener_informacion_educativa(self, cedula):
         """Realizar el scraping para obtener la información educativa de una cédula."""
         try:
             print(f"-> Accediendo a la página con la cédula: {cedula}")
             self.driver.get(config.URL)
-
-            # Valor por defecto para el nombre (se llenará tras 'Consultar')
-            nombre_persona = 0
-
-            # Antes de ingresar la cédula, seleccionar el radio requerido para habilitar el campo (robusto)
-            print("-> Seleccionando el tipo de búsqueda (radio) antes de ingresar la cédula")
-            from selenium.common.exceptions import StaleElementReferenceException
-            radio_seleccionado = False
-            for intento_radio in range(5):
-                try:
-                    radio_opcion = WebDriverWait(self.driver, 10).until(
-                        EC.presence_of_element_located((By.ID, 'formBusqueda:selecItem:0'))
-                    )
-                    # Si no está seleccionado, intentar clic (normal y luego JS)
-                    if not radio_opcion.is_selected():
-                        try:
-                            WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.ID, 'formBusqueda:selecItem:0')))
-                            radio_opcion.click()
-                        except Exception:
-                            try:
-                                self.driver.execute_script("arguments[0].click();", radio_opcion)
-                            except Exception:
-                                pass
-                    # Verificar estado seleccionado y que el input de cédula esté habilitado
-                    WebDriverWait(self.driver, 10).until(
-                        lambda d: d.find_element(By.ID, 'formBusqueda:cedula').is_enabled()
-                    )
-                    # Re-obtener el radio para evitar staleness y comprobar selección definitiva
-                    radio_opcion = self.driver.find_element(By.ID, 'formBusqueda:selecItem:0')
-                    if radio_opcion.is_selected():
-                        radio_seleccionado = True
-                        print("-> Radio de cédula seleccionado y campo habilitado")
-                        time.sleep(1)  # Esperar 1 segundo después de marcar el radio antes de escribir la cédula
-                        break
-                except StaleElementReferenceException:
-                    time.sleep(0.3)
-                    continue
-                except Exception as e:
-                    print(f"   Aviso (intento {intento_radio+1}/5) al seleccionar radio: {e}")
-                    time.sleep(0.3)
-            if not radio_seleccionado:
-                print("Advertencia: No se pudo asegurar la selección del radio de cédula. Reintentando igualmente el ingreso...")
-
-            print("-> Ingresando la cédula en el formulario")
-            # Reubicar y escribir en el campo de cédula con reintentos por staleness
-            intentos_stale = 3
-            ultima_excepcion = None
-            for _ in range(intentos_stale):
-                try:
-                    # Esperar a que el input exista y sea interactuable (tras el AJAX del radio)
-                    cedula_input = WebDriverWait(self.driver, 10).until(
-                        EC.element_to_be_clickable((By.ID, 'formBusqueda:cedula'))
-                    )
-                    try:
-                        cedula_input.clear()
-                    except Exception:
-                        pass
-                    cedula_input.send_keys(str(cedula))
-                    ultima_excepcion = None
-                    break
-                except Exception as e:
-                    from selenium.common.exceptions import StaleElementReferenceException
-                    ultima_excepcion = e
-                    if isinstance(e, StaleElementReferenceException):
-                        time.sleep(0.3)
-                        continue
-                    else:
-                        # si es otro tipo de error, no insistir
-                        break
-            if ultima_excepcion:
-                print(f"Advertencia: no se pudo escribir la cédula por: {ultima_excepcion}")
+            self.preparar_formulario(cedula)
 
             max_reintentos = 5
             for intento in range(max_reintentos):
+                # Se conserva en Python aunque la página se recargue.
+                nombre_persona = 0
                 print(f"-> Intento {intento + 1} de {max_reintentos}")
                 captcha_path = os.path.join(path_general, 'captcha.png')
                 try:
@@ -272,93 +297,30 @@ class ScrapingService:
                     consultar_button = self.driver.find_element(By.ID, 'formBusqueda:clBuscar')
                     consultar_button.click()
 
-                    time.sleep(5)
+                    resultado_consulta = self.esperar_resultado_consulta()
 
-                    try:
-                        mensaje_error = self.driver.find_element(By.ID, 'formBusqueda:validarCaptcha').text
-                        if "El captcha ingresado es incorrecto" in mensaje_error:
-                            print("-> Captcha incorrecto. Re-marcando radio de cédula, reingresando cédula y renovando captcha...")
-                            # 1) Volver a marcar el radio de cédula para asegurar que el input quede habilitado
-                            try:
-                                from selenium.common.exceptions import StaleElementReferenceException
-                                for intento_radio in range(3):
-                                    try:
-                                        radio = WebDriverWait(self.driver, 10).until(
-                                            EC.presence_of_element_located((By.ID, 'formBusqueda:selecItem:0'))
-                                        )
-                                        if not radio.is_selected():
-                                            try:
-                                                WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.ID, 'formBusqueda:selecItem:0')))
-                                                radio.click()
-                                            except Exception:
-                                                try:
-                                                    self.driver.execute_script("arguments[0].click();", radio)
-                                                except Exception:
-                                                    pass
-                                        # Esperar a que el input de cédula esté habilitado
-                                        WebDriverWait(self.driver, 10).until(
-                                            lambda d: d.find_element(By.ID, 'formBusqueda:cedula').is_enabled()
-                                        )
-                                        break
-                                    except StaleElementReferenceException:
-                                        time.sleep(0.2)
-                                        continue
-                                    except Exception:
-                                        time.sleep(0.2)
-                                        continue
-                            except Exception as e_radio:
-                                print(f"   Aviso al re-seleccionar radio: {e_radio}")
+                    if resultado_consulta == "captcha_incorrecto":
+                        print(
+                            "-> Captcha incorrecto. Recargando la página y "
+                            "capturando uno nuevo con la misma cédula..."
+                        )
+                        self.recargar_para_nuevo_captcha(cedula)
+                        continue
 
-                            # 2) Volver a ingresar la cédula (manejo de staleness)
-                            try:
-                                ultima_ex = None
-                                for _ in range(3):
-                                    try:
-                                        cedula_input2 = WebDriverWait(self.driver, 10).until(
-                                            EC.element_to_be_clickable((By.ID, 'formBusqueda:cedula'))
-                                        )
-                                        try:
-                                            cedula_input2.clear()
-                                        except Exception:
-                                            pass
-                                        cedula_input2.send_keys(str(cedula))
-                                        ultima_ex = None
-                                        break
-                                    except Exception as e2:
-                                        from selenium.common.exceptions import StaleElementReferenceException
-                                        ultima_ex = e2
-                                        if isinstance(e2, StaleElementReferenceException):
-                                            time.sleep(0.3)
-                                            continue
-                                        else:
-                                            break
-                                if ultima_ex:
-                                    print(f"   Aviso: no se pudo reescribir la cédula: {ultima_ex}")
-                            except Exception as e_ced:
-                                print(f"   Aviso al reingresar cédula: {e_ced}")
+                    if resultado_consulta == "sin_informacion":
+                        print(
+                            "-> La cédula no consta con títulos registrados. "
+                            "Se guardará con valores en cero."
+                        )
+                        return None
 
-                            # 3) Opcional: Cambiar la imagen del captcha para forzar uno nuevo
-                            try:
-                                btns = self.driver.find_elements(By.NAME, 'formBusqueda:j_idt51')
-                                if not btns:
-                                    btns = self.driver.find_elements(By.ID, 'formBusqueda:j_idt51')
-                                if btns:
-                                    try:
-                                        btns[0].click()
-                                    except Exception:
-                                        try:
-                                            self.driver.execute_script("arguments[0].click();", btns[0])
-                                        except Exception:
-                                            pass
-                                    # Dar un pequeño tiempo para que la imagen se regenere
-                                    time.sleep(0.6)
-                            except Exception:
-                                pass
-
-                            # Ir al siguiente intento del bucle principal
-                            continue
-                    except:
-                        pass
+                    if resultado_consulta == "sin_respuesta":
+                        print(
+                            "-> La consulta no produjo un resultado reconocible. "
+                            "Recargando para intentar con un captcha nuevo."
+                        )
+                        self.recargar_para_nuevo_captcha(cedula)
+                        continue
 
                     # Extraer 'Nombres' del bloque INFORMACIÓN PERSONAL, si está disponible
                     try:
@@ -381,153 +343,31 @@ class ScrapingService:
                     except Exception as e:
                         print(f"Advertencia: no se pudo extraer 'Nombres': {e}")
 
-                    # Paso requerido: antes de hacer clic en "Ver información", asegurar que se ha dado clic en "Consultar"
-                    # y que ambos botones estén presentes; solo entonces proceder con "Ver información".
                     xpath_btn = "//input[starts-with(@id,'formBusqueda:j_idt') and @type='submit' and normalize-space(@value)='Ver información']"
-
-                    # Asegurar que el captcha esté realmente escrito en su input antes de continuar con la secuencia protegida
+                    clicked_ver_info = False
                     try:
-                        cap_input_chk = WebDriverWait(self.driver, 5).until(
-                            EC.presence_of_element_located((By.ID, 'formBusqueda:captcha'))
+                        print("-> Esperando el botón 'Ver información'")
+                        boton_ver_info = WebDriverWait(self.driver, 12).until(
+                            EC.element_to_be_clickable((By.XPATH, xpath_btn))
                         )
                         try:
-                            current_val = cap_input_chk.get_attribute('value') or ''
+                            boton_ver_info.click()
                         except Exception:
-                            current_val = ''
-                        if not current_val.strip() and captcha_resuelto and captcha_resuelto != 'NO':
-                            try:
-                                self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", cap_input_chk)
-                            except Exception:
-                                pass
-                            try:
-                                cap_input_chk.click()
-                            except Exception:
-                                try:
-                                    self.driver.execute_script("arguments[0].click();", cap_input_chk)
-                                except Exception:
-                                    pass
-                            try:
-                                cap_input_chk.clear()
-                            except Exception:
-                                pass
-                            cap_input_chk.send_keys(captcha_resuelto)
-                            time.sleep(2)
-                    except Exception:
-                        # Si no se puede verificar, continuar; la secuencia protegida aún realizará clic en Consultar
-                        pass
-
-                    print("-> Secuencia protegida: asegurar 'Consultar' y presencia de 'Ver información' antes de continuar")
-                    clicked_ver_info = False
-                    for intento_vi in range(3):
-                        # 1) Clic en Consultar
-                        try:
-                            consultar_btn = WebDriverWait(self.driver, 10).until(
-                                EC.element_to_be_clickable((By.ID, 'formBusqueda:clBuscar'))
+                            self.driver.execute_script(
+                                "arguments[0].click();", boton_ver_info
                             )
-                            # pequeña espera para estabilizar DOM (ya se esperó 2s tras escribir captcha en el primer clic)
-                            time.sleep(1.5)
-                            try:
-                                consultar_btn.click()
-                            except Exception:
-                                self.driver.execute_script("arguments[0].click();", consultar_btn)
-                        except Exception as e_cons:
-                            print(f"Aviso: no se pudo hacer clic en 'Consultar' (intento {intento_vi+1}/3): {e_cons}")
+                        clicked_ver_info = True
+                        print("-> Clic en 'Ver información' realizado")
+                        time.sleep(1)
+                    except Exception as e:
+                        print(f"-> No apareció 'Ver información': {e}")
 
-                        # 2) Esperar hasta 6s a que ambos estén presentes: 'Consultar' y 'Ver información'
-                        boton_ver_info = None
-                        t0 = time.time()
-                        while time.time() - t0 < 6:
-                            try:
-                                # Verificar que 'Consultar' siga presente en DOM
-                                _ = self.driver.find_elements(By.ID, 'formBusqueda:clBuscar')
-                                # Buscar 'Ver información' por XPath genérico
-                                elems = self.driver.find_elements(By.XPATH, xpath_btn)
-                                if elems:
-                                    boton_ver_info = elems[0]
-                                    break
-                            except Exception:
-                                pass
-                            time.sleep(0.3)
-
-                        # 3) Si apareció, intentar clic estable en 'Ver información'
-                        if boton_ver_info:
-                            try:
-                                WebDriverWait(self.driver, 10).until(
-                                    EC.element_to_be_clickable((By.XPATH, xpath_btn))
-                                )
-                                try:
-                                    boton_ver_info.click()
-                                except Exception:
-                                    self.driver.execute_script("arguments[0].click();", boton_ver_info)
-                                clicked_ver_info = True
-                                print("-> Clic en 'Ver información' realizado (se detectó presencia de ambos botones)")
-                                time.sleep(1)
-                                break
-                            except Exception as e_click_vi:
-                                print(f"Aviso: fallo al clicar 'Ver información' (intento {intento_vi+1}/3): {e_click_vi}")
-                        else:
-                            print("-> 'Ver información' no apareció tras 'Consultar'; reintentando...")
-
-                    # Si no se logró, mantener el flujo de recuperación previo (re-Consultar y reintento)
                     if not clicked_ver_info:
-                        print("Advertencia: no se pudo hacer clic en ningún botón 'Ver información' conocido tras la secuencia protegida")
-                        # Antes de reintentar 'Consultar', aseguremos que el captcha esté escrito en su input
-                        try:
-                            cap_retry = WebDriverWait(self.driver, 5).until(
-                                EC.presence_of_element_located((By.ID, 'formBusqueda:captcha'))
-                            )
-                            try:
-                                cap_val = cap_retry.get_attribute('value') or ''
-                            except Exception:
-                                cap_val = ''
-                            if (not cap_val.strip()) and captcha_resuelto and captcha_resuelto != 'NO':
-                                try:
-                                    self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", cap_retry)
-                                except Exception:
-                                    pass
-                                try:
-                                    cap_retry.click()
-                                except Exception:
-                                    try:
-                                        self.driver.execute_script("arguments[0].click();", cap_retry)
-                                    except Exception:
-                                        pass
-                                try:
-                                    cap_retry.clear()
-                                except Exception:
-                                    pass
-                                cap_retry.send_keys(captcha_resuelto)
-                                time.sleep(2)
-                        except Exception:
-                            pass
-                        try:
-                            consultar_btn_retry = WebDriverWait(self.driver, 8).until(
-                                EC.element_to_be_clickable((By.ID, 'formBusqueda:clBuscar'))
-                            )
-                            time.sleep(2)
-                            try:
-                                consultar_btn_retry.click()
-                            except Exception:
-                                self.driver.execute_script("arguments[0].click();", consultar_btn_retry)
-                            try:
-                                boton_retry = WebDriverWait(self.driver, 10).until(
-                                    EC.element_to_be_clickable((By.XPATH, xpath_btn))
-                                )
-                                try:
-                                    boton_retry.click()
-                                except Exception:
-                                    self.driver.execute_script("arguments[0].click();", boton_retry)
-                                print("-> 'Ver información' clicado tras reintentar 'Consultar'")
-                                clicked_ver_info = True
-                                time.sleep(1)
-                            except Exception as e_retry_vi:
-                                print(f"Aviso: tras reintentar 'Consultar' no apareció 'Ver información': {e_retry_vi}")
-                        except Exception as e_cons2:
-                            print(f"Aviso: no se pudo reintentar 'Consultar': {e_cons2}")
-
-                    # Si no se logró hacer clic en 'Ver información', no continuar a esperar la tabla; reintentar en el siguiente ciclo
-                    if not clicked_ver_info:
-                        print("-> No se logró hacer clic en 'Ver información' tras asegurar 'Consultar'. Reintentaremos en el siguiente intento del captcha.")
+                        print(
+                            "-> Reiniciando la página con la misma cédula "
+                            "para intentar nuevamente."
+                        )
+                        self.recargar_para_nuevo_captcha(cedula)
                         continue
 
                     print("-> Esperando a que la sección de tabla 'formBusqueda:tabla' esté visible")
@@ -641,6 +481,12 @@ class ScrapingService:
 
                 else:
                     print(f"-> Captcha no resuelto en el intento {intento + 1}")
+                    if intento < max_reintentos - 1:
+                        print(
+                            "-> Recargando para obtener un captcha nuevo y "
+                            "conservar la misma cédula."
+                        )
+                        self.recargar_para_nuevo_captcha(cedula)
 
             return None
         finally:
@@ -663,14 +509,21 @@ class ScrapingService:
 
             # Si hay un resultado, lo agregamos; si no, agregamos la cédula con ceros
             if resultado:
-                # Si el resultado contiene "No existe registro", lo manejamos con ceros
-                if "No existe registro" in resultado[0]:
+                # Mantener compatibilidad con posibles respuestas de texto antiguas.
+                primer_valor = resultado[0] if resultado else ""
+                if (
+                    isinstance(primer_valor, str)
+                    and "No existe registro" in primer_valor
+                ):
                     print(f"No hay registro de título para la cédula {cedula}")
-                    fila = [0, cedula, 0, 0, 0, 0, 0, 0, 0]  # Agregamos la cédula con los valores '0'
+                    fila = [0, cedula, 0, 0, 0, 0, 0, 0, 0]
                 else:
                     fila = resultado
             else:
-                # En caso de None también poner 0's
+                print(
+                    f"Sin información para la cédula {cedula}; "
+                    "se guardará una fila con ceros."
+                )
                 fila = [0, cedula, 0, 0, 0, 0, 0, 0, 0]
 
             # Agregar la fila al DataFrame
